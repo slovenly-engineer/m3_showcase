@@ -45,8 +45,9 @@ jobs:
       - name: Run Gemini Review
         id: gemini_review
         uses: google-github-actions/run-gemini-cli@v0.1.15
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         with:
-          gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
           prompt: |
             You are a senior software engineer performing a code review.
             Please review the following code changes from a Dependabot pull request.
