@@ -1,0 +1,75 @@
+name: Dependabot Review and Auto-merge
+
+on:
+  pull_request_target:
+    types:
+      - opened
+      - reopened
+      - synchronize
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref }}
+  cancel-in-progress: true
+
+jobs:
+  review-and-merge:
+    runs-on: ubuntu-latest
+    if: github.actor == 'dependabot[bot]'
+    permissions:
+      pull-requests: write
+      contents: write # For checking out code and merging the PR
+
+    steps:
+      - name: Fetch Dependabot metadata
+        id: dependabot-metadata
+        uses: dependabot/fetch-metadata@v2.2.0
+        with:
+          github-token: "${{ secrets.GITHUB_TOKEN }}"
+
+      # --- Gemini Review Steps ---
+
+      - name: Checkout PR code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Generate diff
+        id: diff
+        run: |
+          git fetch origin ${{ github.event.pull_request.base.ref }} --depth=1
+          DIFF_CONTENT=$(git diff origin/${{ github.event.pull_request.base.ref }})
+          echo "diff<<EOF" >> $GITHUB_OUTPUT
+          echo "$DIFF_CONTENT" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Run Gemini Review
+        id: gemini_review
+        uses: google-github-actions/run-gemini-cli@v0.1.15
+        with:
+          gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
+          prompt: |
+            You are a senior software engineer performing a code review.
+            Please review the following code changes from a Dependabot pull request.
+            The changes are presented as a git diff.
+            Provide a concise summary of the changes and point out any potential issues or concerns. If the changes are simple and safe (e.g., minor patch versions), a simple "LGTM" or "Looks good to me" is sufficient.
+
+            Here is the diff:
+            ```diff
+            ${{ steps.diff.outputs.diff }}
+            ```
+
+      - name: Post Gemini Review as a comment
+        run: gh pr comment ${{ github.event.pull_request.number }} --body "**Gemini Code Review:**
+          ${{ steps.gemini_review.outputs.result }}"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # --- Auto-merge Step ---
+
+      - name: Approve and enable auto-merge for non-major updates
+        if: steps.dependabot-metadata.outputs.update-type != 'version-update:semver-major'
+        run: |
+          gh pr review --approve ${{ github.event.pull_request.html_url }}
+          gh pr merge --auto --squash ${{ github.event.pull_request.html_url }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
